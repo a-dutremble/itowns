@@ -42,7 +42,7 @@
                 tileMatrixSet: 'EPSG:4326',
                 format: 'image/png',
                 style: 'test:truc',
-                tileMatrix: (zoomLevel) => `EPSG:4326:${zoomLevel}`,
+                tileMatrixCallback: (zoomLevel) => `EPSG:4326:${zoomLevel}`,
             });
 
 
