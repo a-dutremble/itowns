@@ -184,7 +184,6 @@ function addExtrudedPolygonSideFaces(indices, length, offset, count, isClockWise
 
 function featureToPoint(feature, options) {
     const ptsIn = feature.vertices;
-    const colors = new Uint8Array(ptsIn.length);
     const batchIds = new Uint32Array(ptsIn.length);
     const batchId = options.batchId || ((p, id) => id);
 
@@ -210,7 +209,7 @@ function featureToPoint(feature, options) {
 
             coord.copy(context.setLocalCoordinatesFromArray(feature.vertices, v));
             userStyle.setContext(context);
-            const { base_altitude, color, radius } = userStyle.point;
+            const { base_altitude, radius } = userStyle.point;
             coord.z = 0;
 
             if (!pointMaterialSize.includes(radius)) {
@@ -219,7 +218,6 @@ function featureToPoint(feature, options) {
 
             // populate vertices
             base.copy(normal).multiplyScalar(base_altitude).add(coord).toArray(vertices, v);
-            toColor(color).multiplyScalar(255).toArray(colors, v);
             batchIds[j] = id;
         }
         featureId++;
@@ -227,7 +225,6 @@ function featureToPoint(feature, options) {
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
     geom.setAttribute('batchId', new THREE.BufferAttribute(batchIds, 1));
 
     options.pointMaterial.size = pointMaterialSize[0];
@@ -239,9 +236,31 @@ function featureToPoint(feature, options) {
     return new THREE.Points(geom, options.pointMaterial);
 }
 
-function featureToLine(feature, options) {
+function setColorofPoint(mesh) {
+    const feature = mesh.feature;
     const ptsIn = feature.vertices;
     const colors = new Uint8Array(ptsIn.length);
+    context.setFeature(feature);
+    for (const geometry of feature.geometries) {
+        const start = geometry.indices[0].offset;
+        const count = geometry.indices[0].count;
+        const end = start + count;
+        context.setGeometry(geometry);
+
+        for (let v = start * 3, j = start; j < end; v += 3, j += 1) {
+            const { color } = userStyle.point;
+            coord.z = 0;
+
+            // populate vertices
+            toColor(color).multiplyScalar(255).toArray(colors, v);
+        }
+    }
+    const geom = mesh.geometry;
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
+}
+
+function featureToLine(feature, options) {
+    const ptsIn = feature.vertices;
     const count = ptsIn.length / 3;
 
     const batchIds = new Uint32Array(count);
@@ -290,7 +309,7 @@ function featureToLine(feature, options) {
 
             coord.copy(context.setLocalCoordinatesFromArray(feature.vertices, v));
             userStyle.setContext(context);
-            const { base_altitude, color, width } = userStyle.stroke;
+            const { base_altitude, width } = userStyle.stroke;
             coord.z = 0;
 
             if (!lineMaterialWidth.includes(width)) {
@@ -299,7 +318,6 @@ function featureToLine(feature, options) {
 
             // populate geometry buffers
             base.copy(normal).multiplyScalar(base_altitude).add(coord).toArray(vertices, v);
-            toColor(color).multiplyScalar(255).toArray(colors, v);
             batchIds[j] = id;
         }
         featureId++;
@@ -309,15 +327,35 @@ function featureToLine(feature, options) {
         // TODO CREATE material for each feature
         console.warn('Too many differents stroke.width, only the first one will be used');
     }
-    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
     geom.setAttribute('batchId', new THREE.BufferAttribute(batchIds, 1));
     geom.setIndex(new THREE.BufferAttribute(indices, 1));
     return new THREE.LineSegments(geom, options.lineMaterial);
 }
 
+function setColorOfLine(mesh) {
+    const feature = mesh.feature;
+    const ptsIn = feature.vertices;
+    const colors = new Uint8Array(ptsIn.length);
+    const geom = mesh.geometry;
+    context.setFeature(feature);
+
+    // Multi line case
+    for (const geometry of feature.geometries) {
+        context.setGeometry(geometry);
+        const start = geometry.indices[0].offset;
+        const count = geometry.indices[0].count;
+        const end = start + count;
+
+        for (let v = start * 3, j = start; j < end; v += 3, j += 1) {
+            const { color } = userStyle.stroke;
+            toColor(color).multiplyScalar(255).toArray(colors, v);
+        }
+    }
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
+}
+
 function featureToPolygon(feature, options) {
     const vertices = new Float32Array(feature.vertices);
-    const colors = new Uint8Array(feature.vertices.length);
     const indices = [];
 
     const batchIds = new Uint32Array(vertices.length / 3);
@@ -351,13 +389,12 @@ function featureToPolygon(feature, options) {
 
             coord.copy(context.setLocalCoordinatesFromArray(feature.vertices, i));
             userStyle.setContext(context);
-            const { base_altitude, color } = userStyle.fill;
+            const { base_altitude } = userStyle.fill;
             coord.z = 0;
 
             // populate geometry buffers
             base.copy(normal).multiplyScalar(base_altitude).add(coord).toArray(vertices, i);
             batchIds[b] = id;
-            toColor(color).multiplyScalar(255).toArray(colors, i);
         }
 
         featureId++;
@@ -376,12 +413,37 @@ function featureToPolygon(feature, options) {
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
     geom.setAttribute('batchId', new THREE.BufferAttribute(batchIds, 1));
 
     geom.setIndex(new THREE.BufferAttribute(getIntArrayFromSize(indices, vertices.length / 3), 1));
 
     return new THREE.Mesh(geom, options.polygonMaterial);
+}
+
+function setColorOfPolygon(mesh) {
+    const feature = mesh.feature;
+    const ptsIn = mesh.feature.vertices;
+    const colors = new Uint8Array(ptsIn.length * 2);
+    context.setFeature(feature);
+    for (const geometry of feature.geometries) {
+        context.setGeometry(geometry);
+
+        const start = geometry.indices[0].offset;
+        const lastIndice = geometry.indices.slice(-1)[0];
+        const end = lastIndice.offset + lastIndice.count;
+        const count = end - start;
+
+        const startIn = start * 3;
+        const endIn = startIn + count * 3;
+
+        for (let i = startIn, b = start; i < endIn; i += 3, b += 1) {
+            const { color } = userStyle.fill;
+            toColor(color).multiplyScalar(255).toArray(colors, i);
+        }
+    }
+
+    const geom = mesh.geometry;
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
 }
 
 function area(contour, offset, count) {
@@ -400,8 +462,6 @@ function featureToExtrudedPolygon(feature, options) {
     const ptsIn = feature.vertices;
     const vertices = new Float32Array(ptsIn.length * 2);
     const totalVertices = ptsIn.length / 3;
-
-    const colors = new Uint8Array(ptsIn.length * 2);
 
     const indices = [];
 
@@ -437,7 +497,7 @@ function featureToExtrudedPolygon(feature, options) {
             coord.copy(context.setLocalCoordinatesFromArray(ptsIn, i));
 
             userStyle.setContext(context);
-            const { base_altitude, extrusion_height, color } = userStyle.fill;
+            const { base_altitude, extrusion_height } = userStyle.fill;
             coord.z = 0;
 
             // populate base geometry buffers
@@ -447,11 +507,6 @@ function featureToExtrudedPolygon(feature, options) {
             // populate top geometry buffers
             extrusion.copy(normal).multiplyScalar(extrusion_height).add(base).toArray(vertices, t);
             batchIds[b + totalVertices] = id;
-
-            // coloring base and top mesh
-            const meshColor = toColor(color).multiplyScalar(255);
-            meshColor.toArray(colors, t); // top
-            meshColor.multiplyScalar(0.5).toArray(colors, i); // base is half dark
         }
 
         featureId++;
@@ -491,12 +546,66 @@ function featureToExtrudedPolygon(feature, options) {
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
     geom.setAttribute('batchId', new THREE.BufferAttribute(batchIds, 1));
 
     geom.setIndex(new THREE.BufferAttribute(getIntArrayFromSize(indices, vertices.length / 3), 1));
 
     return new THREE.Mesh(geom, options.polygonMaterial);
+}
+
+function setColorOfExtrudedPolygon(mesh) {
+    const feature = mesh.feature;
+    const ptsIn = mesh.feature.vertices;
+    const colors = new Uint8Array(ptsIn.length * 2);
+    context.setFeature(feature);
+    for (const geometry of feature.geometries) {
+        context.setGeometry(geometry);
+
+        const start = geometry.indices[0].offset;
+        const lastIndice = geometry.indices.slice(-1)[0];
+        const end = lastIndice.offset + lastIndice.count;
+        const count = end - start;
+
+        const startIn = start * 3;
+        const endIn = startIn + count * 3;
+
+        for (let i = startIn, t = startIn + ptsIn.length, b = start; i < endIn; i += 3, t += 3, b += 1) {
+            const { color } = userStyle.fill;
+
+            // coloring base and top mesh
+            const meshColor = toColor(color).multiplyScalar(255);
+            meshColor.toArray(colors, t); // top
+            meshColor.multiplyScalar(0.5).toArray(colors, i); // base is half dark
+        }
+    }
+
+    const geom = mesh.geometry;
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
+}
+
+function setColor(meshes, style) {
+    if (style) {
+        userStyle = style;
+    }
+    if (!Array.isArray(meshes)) { meshes = [meshes]; }
+    meshes.forEach((mesh) => {
+        switch (mesh.feature.type) {
+            case FEATURE_TYPES.POINT:
+                setColorofPoint(mesh);
+                break;
+            case FEATURE_TYPES.LINE:
+                setColorOfLine(mesh);
+                break;
+            case FEATURE_TYPES.POLYGON:
+                if (mesh.layer?.style?.fill.extrusion_height) {
+                    setColorOfExtrudedPolygon(mesh);
+                } else {
+                    setColorOfPolygon(mesh);
+                }
+                break;
+            default:
+        }
+    });
 }
 
 /**
@@ -591,6 +700,7 @@ function featureToMesh(feature, options) {
         mesh.material.color = new THREE.Color(0xffffff);
     }
     mesh.feature = feature;
+    mesh.userStyle = userStyle;
 
     return mesh;
 }
@@ -599,6 +709,7 @@ function featureToMesh(feature, options) {
  * @module Feature2Mesh
  */
 export default {
+    setColor,
     /**
      * Return a function that converts [Features]{@link module:GeoJsonParser} to Meshes. Feature collection will be converted to a
      * a THREE.Group.
@@ -661,6 +772,7 @@ export default {
                 mesh.layer = this;
                 return mesh;
             });
+            setColor(meshes);
             const featureNode = new FeatureMesh(meshes, collection);
 
             return featureNode;
