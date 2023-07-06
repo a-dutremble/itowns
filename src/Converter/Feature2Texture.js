@@ -5,6 +5,7 @@ import Coordinates from 'Core/Geographic/Coordinates';
 import Style, { StyleContext } from 'Core/Style';
 
 const context = new StyleContext();
+let userStyle = new Style();
 
 /**
  * Draw polygon (contour, line edge and fill) based on feature vertices into canvas
@@ -76,33 +77,31 @@ function drawFeature(ctx, feature, extent, invCtxScale) {
     const extentDim = extent.planarDimensions();
     const scaleRadius = extentDim.x / ctx.canvas.width;
 
-    context.setFeature(feature);
-
     for (const geometry of feature.geometries) {
         if (Extent.intersectsExtent(geometry.extent, extent)) {
             context.setGeometry(geometry);
 
-            const contextStyle = Style.applyContext(context);
+            userStyle.setContext(context);
 
-            if (contextStyle) {
+            if (userStyle) {
                 if (
-                    feature.type === FEATURE_TYPES.POINT && contextStyle.point
+                    feature.type === FEATURE_TYPES.POINT && userStyle.point
                 ) {
                     // cross multiplication to know in the extent system the real size of
                     // the point
-                    const px = (Math.round(contextStyle.point.radius * invCtxScale) || 3 * invCtxScale) * scaleRadius;
+                    const px = (Math.round(userStyle.point.radius * invCtxScale) || 3 * invCtxScale) * scaleRadius;
                     for (const indice of geometry.indices) {
                         const offset = indice.offset * feature.size;
                         const count = offset + indice.count * feature.size;
                         for (let j = offset; j < count; j += feature.size) {
                             coord.setFromArray(feature.vertices, j);
                             if (extent.isPointInside(coord, px)) {
-                                drawPoint(ctx, feature.vertices[j], feature.vertices[j + 1], contextStyle, invCtxScale);
+                                drawPoint(ctx, feature.vertices[j], feature.vertices[j + 1], userStyle, invCtxScale);
                             }
                         }
                     }
                 } else {
-                    drawPolygon(ctx, feature.vertices, geometry.indices, contextStyle, feature.size, extent, invCtxScale, (feature.type == FEATURE_TYPES.POLYGON));
+                    drawPolygon(ctx, feature.vertices, geometry.indices, userStyle, feature.size, extent, invCtxScale, (feature.type == FEATURE_TYPES.POLYGON));
                 }
             }
         }
@@ -122,9 +121,9 @@ const featureExtent = new Extent('EPSG:4326', 0, 0, 0, 0);
 export default {
     // backgroundColor is a THREE.Color to specify a color to fill the texture
     // with, given there is no feature passed in parameter
-    createTextureFromFeature(collection, extent, sizeTexture, layerStyle = {}, backgroundColor) {
+    createTextureFromFeature(collection, extent, sizeTexture, layerStyle = userStyle, backgroundColor) {
         let texture;
-        context.layerStyle = layerStyle;
+        userStyle = layerStyle;
 
         if (collection) {
             // A texture is instancied drawn canvas
@@ -172,15 +171,11 @@ export default {
             // to scale line width and radius circle
             const invCtxScale = Math.abs(1 / scale.x);
 
-            context.globals = {
-                fill: true,
-                stroke: true,
-                point: true,
-                zoom: extent.zoom,
-            };
+            context.setZoom(extent.zoom);
 
             // Draw the canvas
             for (const feature of collection.features) {
+                context.setFeature(feature);
                 drawFeature(ctx, feature, featureExtent, invCtxScale);
             }
 

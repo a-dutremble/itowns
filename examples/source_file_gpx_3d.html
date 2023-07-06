@@ -83,7 +83,7 @@
                             structure: '3d',
                         }
                     }))
-                    .then(itowns.Feature2Mesh.convert({style}))
+                    .then(itowns.Feature2Mesh.convert({style: new itowns.Style(style)}))
                     .then(function (mesh) {
                         if (mesh) {
                             mesh.updateMatrixWorld();

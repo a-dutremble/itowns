@@ -15,20 +15,9 @@ const matrix = svg.createSVGMatrix();
 
 const inv255 = 1 / 255;
 const canvas = (typeof document !== 'undefined') ? document.createElement('canvas') : {};
-const style_properties = {};
 
 function baseAltitudeDefault(properties, ctx) {
     return ctx?.coordinates?.z || ctx?.collection?.center?.z || 0;
-}
-
-function mapPropertiesFromContext(mainKey, from, to, context) {
-    to[mainKey] = to[mainKey] || {};
-    for (const key of style_properties[mainKey]) {
-        const value = readExpression(from[mainKey][key], context);
-        if (value !== undefined) {
-            to[mainKey][key] = value;
-        }
-    }
 }
 
 export function readExpression(property, ctx) {
@@ -39,21 +28,23 @@ export function readExpression(property, ctx) {
             for (let i = property.stops.length - 1; i >= 0; i--) {
                 const stop = property.stops[i];
 
-                if (ctx.globals.zoom >= stop[0]) {
+                if (ctx.zoom >= stop[0]) {
                     return stop[1];
                 }
             }
             return property.stops[0][1];
-        } else if (property instanceof Function) {
+        }
+        if (typeof property === 'string' || property instanceof String) {
+            property = property.replace(/\{(.+?)\}/g, (a, b) => (ctx.properties[b] || '')).trim();
+            // return property.replace(/\{(.+?)\}/g, (a, b) => (ctx.properties[b] || '')).trim();
+        }
+        if (property instanceof Function) {
             // TOBREAK: Pass the current `context` as a unique parameter.
             // In this proposal, metadata will be accessed in the callee by the
             // `context.properties` property.
             return property(ctx.properties, ctx);
-        } else if (typeof property === 'string' || property instanceof String) {
-            return property.replace(/\{(.+?)\}/g, (a, b) => (ctx.properties[b] || '')).trim();
-        } else {
-            return property;
         }
+        return property;
     }
 }
 
@@ -140,21 +131,27 @@ const textAnchorPosition = {
     'top-left': [0, 0],
 };
 
-function defineStyleProperty(style, category, name, value, defaultValue) {
+function defineStyleProperty(style, category, parameter, value, defaultValue) {
     let property;
-
     Object.defineProperty(
         style[category],
-        name,
+        parameter,
         {
             enumerable: true,
-            get: () => property ?? defaultValue,
+            get: () => {
+                if (property) { return property; }
+                if (value) { return readExpression(value, style.context); }
+                const dataValue = style.context.fStyle?.[category]?.[parameter];
+                if (dataValue) { return readExpression(dataValue, style.context); }
+                if (defaultValue instanceof Function) {
+                    return defaultValue(style.context.properties, style.context);
+                }
+                return defaultValue;
+            },
             set: (v) => {
                 property = v;
             },
         });
-
-    style[category][name] = value;
 }
 
 /**
@@ -163,8 +160,7 @@ function defineStyleProperty(style, category, name, value, defaultValue) {
  * type of feature and what is needed (fill, stroke or draw a point, etc.) as well as where to get its
  * properties and its coordinates (for base_altitude).
  *
- * @property {Object}           globals Style type (fill, stroke, point, text and or icon) to consider, it also
- *                                  contains the current zoom.
+ * @property {number}           zoom Current zoom to display the FeatureGeometry.
  * @property {Object}           collection The FeatureCollection to which the FeatureGeometry is attached.
  * @property {Object}           properties Properties of the FeatureGeometry.
  * @property {string}           type Geometry type of the feature. Can be `point`, `line`, or `polygon`.
@@ -185,11 +181,9 @@ export class StyleContext {
     #worldCoordsComputed = true;
     #feature = {};
     #geometry = {};
-    /**
-     * @constructor
-     */
-    constructor() {
-        this.globals = {};
+
+    setZoom(zoom) {
+        this.zoom = zoom;
     }
 
     setFeature(f) {
@@ -217,37 +211,12 @@ export class StyleContext {
     get type() {
         return this.#feature.type;
     }
-
-    get style() {
-        const layerStyle = this.layerStyle || {};
+    get fStyle() {
         let featureStyle = this.#feature.style;
         if (featureStyle instanceof Function) {
-            featureStyle = readExpression(featureStyle, this);
+            featureStyle = featureStyle(this.properties, this);
         }
-        const style = {
-            fill: {
-                ...featureStyle.fill,
-                ...layerStyle.fill,
-            },
-            stroke: {
-                ...featureStyle.stroke,
-                ...layerStyle.stroke,
-            },
-            point: {
-                ...featureStyle.point,
-                ...layerStyle.point,
-            },
-            icon: {
-                ...featureStyle.icon,
-                ...layerStyle.icon,
-            },
-            text: {
-                ...featureStyle.text,
-                ...layerStyle.text,
-            },
-            order: layerStyle.order || featureStyle.order,
-        };
-        return style;
+        return featureStyle;
     }
 
     get coordinates() {
@@ -260,6 +229,62 @@ export class StyleContext {
         }
         return this.#worldCoord;
     }
+}
+
+function _addIcon(icon, domElement, opt) {
+    const cIcon = icon.cloneNode();
+
+    cIcon.setAttribute('class', 'itowns-icon');
+
+    // cIcon.width = icon.width * this.icon.size;
+    // cIcon.height = icon.height * this.icon.size;
+    // cIcon.style.color = this.icon.color;
+    // cIcon.style.opacity = this.icon.opacity;
+    cIcon.width = icon.width * opt.size;
+    cIcon.height = icon.height * opt.size;
+    cIcon.style.color = opt.color;
+    cIcon.style.opacity = opt.opacity;
+    cIcon.style.position = 'absolute';
+    cIcon.style.top = '0';
+    cIcon.style.left = '0';
+
+    switch (opt.anchor) { // center by default
+        case 'left':
+            cIcon.style.top = `${-0.5 * cIcon.height}px`;
+            break;
+        case 'right':
+            cIcon.style.top = `${-0.5 * cIcon.height}px`;
+            cIcon.style.left = `${-cIcon.width}px`;
+            break;
+        case 'top':
+            cIcon.style.left = `${-0.5 * cIcon.width}px`;
+            break;
+        case 'bottom':
+            cIcon.style.top = `${-cIcon.height}px`;
+            cIcon.style.left = `${-0.5 * cIcon.width}px`;
+            break;
+        case 'bottom-left':
+            cIcon.style.top = `${-cIcon.height}px`;
+            break;
+        case 'bottom-right':
+            cIcon.style.top = `${-cIcon.height}px`;
+            cIcon.style.left = `${-cIcon.width}px`;
+            break;
+        case 'top-left':
+            break;
+        case 'top-right':
+            cIcon.style.left = `${-cIcon.width}px`;
+            break;
+        case 'center':
+        default:
+            cIcon.style.top = `${-0.5 * cIcon.height}px`;
+            cIcon.style.left = `${-0.5 * cIcon.width}px`;
+            break;
+    }
+
+    cIcon.style['z-index'] = -1;
+    domElement.appendChild(cIcon);
+    return cIcon;
 }
 
 /**
@@ -459,8 +484,8 @@ export class StyleOptions {}
  * for each coordinate.
  * If `base_altitude` is `undefined`, the original altitude is kept, and if it doesn't exist
  * then the altitude value is set to 0.
- * @property {Number|Function} fill.extrusion_height - Only for {@link GeometryLayer}, if defined,
- * polygons will be extruded by the specified amount
+ * @property {Number|Function} [fill.extrusion_height] - Only for {@link GeometryLayer} and if user sets it.
+ * If defined, polygons will be extruded by the specified amount.
  * @property {Object} stroke - Lines and polygons edges.
  * @property {String|Function|THREE.Color} stroke.color The color of the line. Can be any [valid
  * color string](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value).
@@ -593,6 +618,7 @@ class Style {
      */
     constructor(params = {}) {
         this.isStyle = true;
+        this.context = new StyleContext();
 
         this.order = params.order || 0;
 
@@ -612,7 +638,9 @@ class Style {
         defineStyleProperty(this, 'fill', 'opacity', params.fill.opacity, 1.0);
         defineStyleProperty(this, 'fill', 'pattern', params.fill.pattern);
         defineStyleProperty(this, 'fill', 'base_altitude', params.fill.base_altitude, baseAltitudeDefault);
-        defineStyleProperty(this, 'fill', 'extrusion_height', params.fill.extrusion_height);
+        if (params.fill.extrusion_height) {
+            defineStyleProperty(this, 'fill', 'extrusion_height', params.fill.extrusion_height);
+        }
 
         this.stroke = {};
         defineStyleProperty(this, 'stroke', 'color', params.stroke.color);
@@ -628,7 +656,9 @@ class Style {
         defineStyleProperty(this, 'point', 'radius', params.point.radius, 2.0);
         defineStyleProperty(this, 'point', 'width', params.point.width, 0.0);
         defineStyleProperty(this, 'point', 'base_altitude', params.point.base_altitude, baseAltitudeDefault);
-        defineStyleProperty(this, 'point', 'model', params.point.model);
+        if (params.point.model) {
+            defineStyleProperty(this, 'point', 'model', params.point.model);
+        }
 
         this.text = {};
         defineStyleProperty(this, 'text', 'field', params.text.field);
@@ -679,6 +709,25 @@ class Style {
         return this;
     }
 
+    copy2(...style) {
+        style.forEach((source) => {
+            const descriptors = Object.keys(source).reduce((descriptors, key) => {
+                descriptors[key] = Object.getOwnPropertyDescriptor(source, key);
+                return descriptors;
+            }, {});
+            // Par défaut, Object.assign copie également
+            // les symboles énumérables
+            Object.getOwnPropertySymbols(source).forEach((sym) => {
+                const descriptor = Object.getOwnPropertyDescriptor(source, sym);
+                if (descriptor.enumerable) {
+                    descriptors[sym] = descriptor;
+                }
+            });
+            Object.defineProperties(this, descriptors);
+        });
+        return this;
+    }
+
     /**
          * Clones this style.
          *
@@ -689,35 +738,8 @@ class Style {
         return clone.copy(this);
     }
 
-    /**
-     * Map style object properties (fill, stroke, point, text and icon) from context to Style.
-     * Only the necessary properties are mapped to object.
-     * if a property is expression, the mapped value will be the expression result depending on context.
-     * @param  {StyleContext}  context  The context of the FeatureGeometry that we want to get the Style.
-     *
-     * @return {Style}  mapped style depending on context.
-     */
-    static applyContext(context) {
-        const styleConc = new Style(context.style);
-        const style = {};
-        if (styleConc.fill.color || styleConc.fill.pattern || context.globals.fill) {
-            mapPropertiesFromContext('fill', styleConc, style, context);
-        }
-        if (styleConc.stroke.color || context.globals.stroke) {
-            mapPropertiesFromContext('stroke', styleConc, style, context);
-        }
-        if (styleConc.point.color || styleConc.point.model || context.globals.point) {
-            mapPropertiesFromContext('point', styleConc, style, context);
-        }
-
-        if (styleConc.text || context.globals.text) {
-            mapPropertiesFromContext('text', styleConc, style, context);
-        }
-        if (styleConc.icon || context.globals.icon) {
-            mapPropertiesFromContext('icon', styleConc, style, context);
-        }
-        style.order = styleConc.order;
-        return new Style(style);
+    setContext(ctx) {
+        this.context = ctx;
     }
 
     /**
@@ -907,16 +929,19 @@ class Style {
      * @param {Boolean} canBeFilled - true if feature.type == FEATURE_TYPES.POLYGON.
      */
     applyToCanvasPolygon(txtrCtx, polygon, invCtxScale, canBeFilled) {
+        const context = this.context;
         // draw line or edge of polygon
         if (this.stroke) {
             // TO DO add possibility of using a pattern (https://github.com/iTowns/itowns/issues/2210)
-            Style.prototype._applyStrokeToPolygon.call(this, txtrCtx, invCtxScale, polygon);
+            // Style.prototype._applyStrokeToPolygon.call(this, txtrCtx, invCtxScale, polygon);
+            this._applyStrokeToPolygon(txtrCtx, invCtxScale, polygon, context);
         }
 
         // fill inside of polygon
         if (canBeFilled && this.fill) {
             // canBeFilled can be move to StyleContext in the later PR
-            Style.prototype._applyFillToPolygon.call(this, txtrCtx, invCtxScale, polygon);
+            // Style.prototype._applyFillToPolygon.call(this, txtrCtx, invCtxScale, polygon);
+            this._applyFillToPolygon(txtrCtx, invCtxScale, polygon, context);
         }
     }
 
@@ -944,10 +969,11 @@ class Style {
         // need doc for the txtrCtx.fillStyle.src that seems to always be undefined
         if (this.fill.pattern) {
             let img = this.fill.pattern;
+            const cropValues = this.fill.pattern.cropValues;
             if (this.fill.pattern.source) {
                 img = await loadImage(this.fill.pattern.source);
             }
-            cropImage(img, this.fill.pattern.cropValues);
+            cropImage(img, cropValues);
 
             txtrCtx.fillStyle = txtrCtx.createPattern(canvas, 'repeat');
             if (txtrCtx.fillStyle.setTransform) {
@@ -985,7 +1011,6 @@ class Style {
         if (this.text.size > 0) {
             domElement.style.fontSize = `${this.text.size}px`;
         }
-
         domElement.style.fontFamily = this.text.font.join(',');
         domElement.style.textTransform = this.text.transform;
         domElement.style.letterSpacing = `${this.text.spacing}em`;
@@ -1006,72 +1031,29 @@ class Style {
         const icon = document.createElement('img');
 
         const iconPromise  = new Promise((resolve, reject) => {
-            icon.onload = () => resolve(this._addIcon(icon, domElement));
+            const opt = {
+                size: this.icon.size,
+                color: this.icon.color,
+                opacity: this.icon.opacity,
+                anchor: this.icon.anchor,
+            };
+            icon.onload = () => resolve(_addIcon(icon, domElement, opt));
             icon.onerror = err => reject(err);
         });
 
         if (!this.icon.cropValues && !this.icon.color) {
             icon.src = this.icon.source;
         } else {
+            const cropValues = this.icon.cropValues;
+            const color = this.icon.color;
+            const id = this.icon.id || this.icon.source;
             const img = await loadImage(this.icon.source);
-            const imgd = cropImage(img, this.icon.cropValues);
-            const imgdColored = replaceWhitePxl(imgd, this.icon.color, this.icon.id || this.icon.source);
+            const imgd = cropImage(img, cropValues);
+            const imgdColored = replaceWhitePxl(imgd, color, id);
             canvas.getContext('2d').putImageData(imgdColored, 0, 0);
             icon.src = canvas.toDataURL('image/png');
         }
         return iconPromise;
-    }
-
-    _addIcon(icon, domElement) {
-        const cIcon = icon.cloneNode();
-
-        cIcon.setAttribute('class', 'itowns-icon');
-
-        cIcon.width = icon.width * this.icon.size;
-        cIcon.height = icon.height * this.icon.size;
-        cIcon.style.color = this.icon.color;
-        cIcon.style.opacity = this.icon.opacity;
-        cIcon.style.position = 'absolute';
-        cIcon.style.top = '0';
-        cIcon.style.left = '0';
-
-        switch (this.icon.anchor) { // center by default
-            case 'left':
-                cIcon.style.top = `${-0.5 * cIcon.height}px`;
-                break;
-            case 'right':
-                cIcon.style.top = `${-0.5 * cIcon.height}px`;
-                cIcon.style.left = `${-cIcon.width}px`;
-                break;
-            case 'top':
-                cIcon.style.left = `${-0.5 * cIcon.width}px`;
-                break;
-            case 'bottom':
-                cIcon.style.top = `${-cIcon.height}px`;
-                cIcon.style.left = `${-0.5 * cIcon.width}px`;
-                break;
-            case 'bottom-left':
-                cIcon.style.top = `${-cIcon.height}px`;
-                break;
-            case 'bottom-right':
-                cIcon.style.top = `${-cIcon.height}px`;
-                cIcon.style.left = `${-cIcon.width}px`;
-                break;
-            case 'top-left':
-                break;
-            case 'top-right':
-                cIcon.style.left = `${-cIcon.width}px`;
-                break;
-            case 'center':
-            default:
-                cIcon.style.top = `${-0.5 * cIcon.height}px`;
-                cIcon.style.left = `${-0.5 * cIcon.width}px`;
-                break;
-        }
-
-        cIcon.style['z-index'] = -1;
-        domElement.appendChild(cIcon);
-        return cIcon;
     }
 
     /**
@@ -1109,13 +1091,5 @@ Object.keys(CustomStyle).forEach((key) => {
 if (typeof document !== 'undefined') {
     document.getElementsByTagName('head')[0].appendChild(customStyleSheet);
 }
-
-const style = new Style();
-
-style_properties.fill = Object.keys(style.fill);
-style_properties.stroke = Object.keys(style.stroke);
-style_properties.point = Object.keys(style.point);
-style_properties.text = Object.keys(style.text);
-style_properties.icon = Object.keys(style.icon);
 
 export default Style;
