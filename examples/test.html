@@ -22,7 +22,7 @@
             var view = new itowns.GlobeView(viewerDiv, placement);
 
             var orthoSource = new itowns.WMTSSource({
-                url: 'https://wxs.ign.fr/3ht7xcw6f7nciopo16etuqp2/geoportail/wmts',
+                url: 'https://wxs.ign.fr/essentiels/geoportail/wmts',
                 crs: "EPSG:3857",
                 name: 'ORTHOIMAGERY.ORTHOPHOTOS',
                 tileMatrixSet: 'PM',
@@ -34,6 +34,21 @@
             });
 
             view.addLayer(orthoLayer);
+
+            var elevationSource = new itowns.WMTSSource({
+                url: 'https://wxs.ign.fr/altimetrie/geoportail/wmts',
+                crs: 'EPSG:4326',
+                name: 'ELEVATION.ELEVATIONGRIDCOVERAGE.SRTM3',
+                tileMatrixSet: 'WGS84G',
+                format: 'image/x-bil;bits=32',
+                zoom: {min: 3, max: 10},
+            });
+
+            var elevationLayer = new itowns.ElevationLayer('MNT_WORLD', {
+                source: elevationSource,
+            });
+
+            view.addLayer(elevationLayer);
 
             var sourceLayer = new itowns.WMTSSource({
                 url: 'http://localhost:8080/geoserver/gwc/service/wmts',
@@ -54,20 +69,7 @@
         
             //http://localhost:8080/geoserver/gwc/service/wmts?layer=test%3Atest&style=&tilematrixset=EPSG%3A4326&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fjpeg&TileMatrix=EPSG%3A4326%3A13&TileCol=8501&TileRow=2021
             
-            var elevationSource = new itowns.WMTSSource({
-                url: 'https://wxs.ign.fr/3ht7xcw6f7nciopo16etuqp2/geoportail/wmts',
-                crs: 'EPSG:4326',
-                name: 'ELEVATION.ELEVATIONGRIDCOVERAGE.SRTM3',
-                tileMatrixSet: 'WGS84G',
-                format: 'image/x-bil;bits=32',
-                zoom: {min: 3, max: 10},
-            });
-
-            var elevationLayer = new itowns.ElevationLayer('MNT_WORLD', {
-                source: elevationSource,
-            });
-
-            view.addLayer(elevationLayer);
+            
         </script>
      </body>
 </html>
